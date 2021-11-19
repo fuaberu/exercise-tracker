@@ -1,8 +1,9 @@
 const express = require('express');
-var bodyParser = require('body-parser');
 const cors = require('cors');
-const mongoose = require('mongoose');
 require('dotenv').config();
+const moment = require('moment');
+const mongoose = require('mongoose');
+var bodyParser = require('body-parser');
 const app = express();
 
 //momgoose
@@ -11,13 +12,13 @@ mongoose.connect(mongoUrl, () => console.log('connected to mongo'));
 
 //mongoose schema
 const userSchema = new mongoose.Schema({
-	username: String,
+	username: String
 });
 const exerciseSchema = new mongoose.Schema({
 	userId: String,
 	description: String,
 	duration: Number,
-	date: Date,
+	date: Number
 });
 
 //mongoose model
@@ -39,7 +40,7 @@ app.post('/api/users', async (req, res) => {
 		if (exists.length === 0) {
 			//add user
 			const newUser = new userModel({
-				username: user,
+				username: user
 			});
 			newUser.save();
 			res.json(newUser);
@@ -54,7 +55,6 @@ app.post('/api/users', async (req, res) => {
 //get all users
 app.get('/api/users', async (req, res) => {
 	try {
-		//check if user exists
 		const all = await userModel.find();
 		res.json(all);
 	} catch (error) {
@@ -63,50 +63,124 @@ app.get('/api/users', async (req, res) => {
 });
 
 //post exercise
-app.post('/api/users/:_id/exercises', (req, res) => {
+app.post('/api/users/:_id/exercises', async (req, res) => {
 	const id = req.params._id;
 	const description = req.body.description;
 	const duration = parseInt(req.body.duration);
-	const date = req.body.date;
-	if (!date) {
-		const exercise = new exerciseModel({
-			userId: id,
-			description: description,
-			duration: duration,
-			date: Date.now(),
-		});
-		exercise.save();
-		res.json(exercise);
-	} else {
-		const exercise = new exerciseModel({
-			userId: id,
-			description: description,
-			duration: duration,
-			date: date,
-		});
-		exercise.save();
-		res.json(exercise);
+	const dateBody = new Date(req.body.date);
+	const dateUnix = dateBody.getTime();
+	const currentTime = new Date().getTime();
+	try {
+		//check if there is a user
+		const exists = await userModel.findById(id);
+		if (exists) {
+			if (dateUnix) {
+				const exercise = new exerciseModel({
+					userId: id,
+					description,
+					duration,
+					date: dateUnix
+				});
+				exercise.save();
+				res.json({
+					_id: id,
+					username: exists.username,
+					date: moment(
+						new Date(dateUnix).toUTCString().split(',').join('').slice(0, 15),
+						'ddd DD MMM YYYY'
+					).format('ddd MMM DD YYYY'),
+					duration,
+					description
+				});
+			} else {
+				const exercise = new exerciseModel({
+					userId: id,
+					description,
+					duration,
+					date: currentTime
+				});
+				exercise.save();
+				res.json({
+					_id: id,
+					username: exists.username,
+					date: moment(
+						new Date(currentTime).toUTCString().split(',').join('').slice(0, 15),
+						'ddd DD MMM YYYY'
+					).format('ddd MMM DD YYYY'),
+					duration,
+					description
+				});
+			}
+		} else {
+			res.json('User not found');
+		}
+	} catch (error) {
+		res.json(error);
 	}
 });
 
 //get logs
 app.get('/api/users/:_id/logs', async (req, res) => {
 	const id = req.params._id;
-	const from = req.query.from;
-	const to = req.query.to;
-	const limit = req.query.limit;
+	const fromBody = new Date(req.query.from);
+	const fromUnix = fromBody.getTime();
+	const toBody = new Date(req.query.to);
+	const toUnix = toBody.getTime();
+	const limit = req.query.limit ? parseInt(req.query.limit) : '';
 	try {
 		//check if user exists
-		const user = await userModel.find({ _id: id });
-		if (user.length !== 0) {
-			const exercises = await exerciseModel.find({ userId: id });
-
-			res.json({
-				username: user[0].username,
-				count: exercises.length,
-				_id: user[0]._id,
-				log: exercises,
-			});
+		const user = await userModel.findById(id);
+		if (user) {
+			if (req.query.from && req.query.to) {
+				const exercises = await exerciseModel
+					.find(
+						{
+							$and: [{ userId: id }, { date: { $gte: fromUnix, $lte: toUnix } }]
+						},
+						{ __v: 0, _id: 0 }
+					)
+					.limit(limit);
+				const exercisesString = exercises.map(
+					(el) =>
+						(el = {
+							description: el.description,
+							duration: el.duration,
+							date: moment(
+								new Date(el.date).toUTCString().split(',').join('').slice(0, 15),
+								'ddd DD MMM YYYY'
+							).format('ddd MMM DD YYYY')
+						})
+				);
+				res.json({
+					username: user.username,
+					count: exercises.length,
+					_id: user._id,
+					log: exercisesString
+				});
+			} else {
+				const exercises = await exerciseModel
+					.find({ userId: id }, { __v: 0, _id: 0 })
+					.limit(limit);
+				const exercisesString = exercises.map(
+					(el) =>
+						(el = {
+							description: el.description,
+							duration: el.duration,
+							date: moment(
+								new Date(el.date).toUTCString().split(',').join('').slice(0, 15),
+								'ddd DD MMM YYYY'
+							).format('ddd MMM DD YYYY')
+						})
+				);
+				res.json({
+					_id: user._id,
+					username: user.username,
+					count: exercises.length,
+					log: exercisesString
+				});
+			}
+		} else {
+			res.json('no user');
 		}
 	} catch (error) {
 		res.json(error);
